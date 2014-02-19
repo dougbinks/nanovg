@@ -19,6 +19,11 @@
 #ifndef NANOVG_H
 #define NANOVG_H
 
+#include "RuntimeSourceDependency.h"
+RUNTIME_COMPILER_SOURCEDEPENDENCY;
+
+#include "stb_image.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
