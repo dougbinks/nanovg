@@ -51,13 +51,29 @@ nvgFillColor(vg, nvgRGBA(255,192,0,255));
 nvgFill(vg);
 ```
 
+## Rendering is wrong, what to do?
+
+- make sure you have created NanoVG context using one of the `nvgCreatexxx()` calls
+- make sure you have initialised OpenGL with stencil buffer
+- make sure you have cleared stencil buffer
+- make sure all rendering calls happen between `nvgBeginFrame()` and `nvgEndFrame()`
+- make sure you have following OpenGL state between calls to `nvgBeginFrame()` and `nvgEndFrame()`:
+  - `glEnable(GL_CULL_FACE)`
+  - `glCullFace(GL_BACK)`
+  - `glEnable(GL_BLEND)`
+  - `glDisable(GL_DEPTH_TEST)`
+- if the problem still persists, please report an issue!
+
 ## API Reference
 
 See the header file [nanovg.h](/src/nanovg.h) for API reference.
 
 
-# License
+## License
 The library is licensed under [zlib license](LICENSE.txt)
+
+## Discussions
+[NanoVG mailing list](https://groups.google.com/forum/#!forum/nanovg)
 
 ## Links
 Uses [stb_truetype](http://nothings.org) for font rendering.

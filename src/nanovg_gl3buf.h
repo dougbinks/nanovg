@@ -118,8 +118,8 @@ struct GLNVGpath {
 struct GLNVGfragUniforms {
    float scissorMat[12]; // matrices are actually 3 vec4s
    float paintMat[12];
-   float innerCol[4];
-   float outerCol[4];
+   struct NVGcolor innerCol;
+   struct NVGcolor  outerCol;
    float scissorExt[2];
    float scissorScale[2];
    float extent[2];
@@ -369,7 +369,7 @@ static int glnvg__renderCreate(void* uptr)
 		"#ifdef EDGE_AA\n"
 		"// Stroke - from [0..1] to clipped pyramid, where the slope is 1px.\n"
 		"float strokeMask() {\n"
-		"	return min(1.0, (1.0-abs(ftcoord.x*2.0-1.0))*strokeMult) * ftcoord.y;\n"
+		"	return min(1.0, (1.0-abs(ftcoord.x*2.0-1.0))*strokeMult) * min(1.0, ftcoord.y);\n"
 		"}\n"
 		"#endif\n"
 		"\n"
@@ -484,6 +484,7 @@ static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, const 
 	return tex->id;
 }
 
+
 static int glnvg__renderDeleteTexture(void* uptr, int image)
 {
 	struct GLNVGcontext* gl = (struct GLNVGcontext*)uptr;
@@ -514,7 +515,7 @@ static int glnvg__renderUpdateTexture(void* uptr, int image, int x, int y, int w
 	glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
 	glPixelStorei(GL_UNPACK_SKIP_ROWS,0);
 
-	return 1;
+    return 1;
 }
 
 static int glnvg__renderGetTextureSize(void* uptr, int image, int* w, int* h)
@@ -574,13 +575,14 @@ static void glnvg__xformToMat3x4(float* m3, float* t)
 	m3[11] = 0.0f;
 }
 
-static int glnvg__convertPaint(struct GLNVGcontext* gl, struct GLNVGfragUniforms* frag, struct NVGpaint* paint, struct NVGscissor* scissor, float width)
+static int glnvg__convertPaint(struct GLNVGcontext* gl, struct GLNVGfragUniforms* frag, struct NVGpaint* paint,
+							   struct NVGscissor* scissor, float width, float fringe)
 {
 	struct GLNVGtexture* tex = NULL;
 	float invxform[6];
 
-	glnvg__toFloatColor(frag->innerCol, paint->innerColor);
-	glnvg__toFloatColor(frag->outerCol, paint->outerColor);
+	frag->innerCol = paint->innerColor;
+	frag->outerCol = paint->outerColor;
 
 	glnvg__xformInverse(invxform, paint->xform);
 	glnvg__xformToMat3x4(frag->paintMat, invxform);
@@ -596,11 +598,11 @@ static int glnvg__convertPaint(struct GLNVGcontext* gl, struct GLNVGfragUniforms
 		glnvg__xformToMat3x4(frag->scissorMat, invxform);
 		frag->scissorExt[0] = scissor->extent[0];
 		frag->scissorExt[1] = scissor->extent[1];
-		frag->scissorScale[0] = sqrtf(scissor->xform[0]*scissor->xform[0] + scissor->xform[2]*scissor->xform[2]);
-		frag->scissorScale[1] = sqrtf(scissor->xform[1]*scissor->xform[1] + scissor->xform[3]*scissor->xform[3]);
+		frag->scissorScale[0] = sqrtf(scissor->xform[0]*scissor->xform[0] + scissor->xform[2]*scissor->xform[2]) / fringe;
+		frag->scissorScale[1] = sqrtf(scissor->xform[1]*scissor->xform[1] + scissor->xform[3]*scissor->xform[3]) / fringe;
 	}
 	memcpy(frag->extent, paint->extent, sizeof(frag->extent));
-	frag->strokeMult = width*0.5f + 0.5f;
+	frag->strokeMult = (width*0.5f + fringe*0.5f) / fringe;
 
 	if (paint->image != 0) {
 		tex = glnvg__findTexture(gl, paint->image);
@@ -625,9 +627,10 @@ static void glnvg__setUniforms(struct GLNVGcontext* gl, int uniformOffset, int i
 	}
 }
 
-static void glnvg__renderViewport(void* uptr, int width, int height)
+static void glnvg__renderViewport(void* uptr, int width, int height, int alphaBlend)
 {
 	struct GLNVGcontext* gl = (struct GLNVGcontext*)uptr;
+	NVG_NOTUSED(alphaBlend);
 	gl->view[0] = (float)width;
 	gl->view[1] = (float)height;
 }
@@ -716,7 +719,7 @@ static void glnvg__triangles(struct GLNVGcontext* gl, struct GLNVGcall* call)
 	glDrawArrays(GL_TRIANGLES, call->triangleOffset, call->triangleCount);
 }
 
-static void glnvg__renderFlush(void* uptr)
+static void glnvg__renderFlush(void* uptr, int alphaBlend)
 {
 	struct GLNVGcontext* gl = (struct GLNVGcontext*)uptr;
 	int i;
@@ -725,6 +728,10 @@ static void glnvg__renderFlush(void* uptr)
 
 		glUseProgram(gl->shader.prog);
 		glEnable(GL_CULL_FACE);
+		if (alphaBlend == NVG_PREMULTIPLIED_ALPHA)
+			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+		else
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		// Upload ubo for frag shaders
 		glBindBuffer(GL_UNIFORM_BUFFER, gl->fragBuf);
@@ -844,7 +851,7 @@ static void glnvg__vset(struct NVGvertex* vtx, float x, float y, float u, float 
 	vtx->v = v;
 }
 
-static void glnvg__renderFill(void* uptr, struct NVGpaint* paint, struct NVGscissor* scissor,
+static void glnvg__renderFill(void* uptr, struct NVGpaint* paint, struct NVGscissor* scissor, float fringe,
 							  const float* bounds, const struct NVGpath* paths, int npaths)
 {
 	struct GLNVGcontext* gl = (struct GLNVGcontext*)uptr;
@@ -902,15 +909,15 @@ static void glnvg__renderFill(void* uptr, struct NVGpaint* paint, struct NVGscis
 		frag = nvg__fragUniformPtr(gl, call->uniformOffset);
 		frag->type = NSVG_SHADER_SIMPLE;
 		// Fill shader
-		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset + gl->fragSize), paint, scissor, 1.0001f);
+		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset + gl->fragSize), paint, scissor, fringe, fringe);
 	} else {
 		call->uniformOffset = glnvg__allocFragUniforms(gl, 1);
 		// Fill shader
-		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, 1.0001f);
+		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, fringe, fringe);
 	}
 }
 
-static void glnvg__renderStroke(void* uptr, struct NVGpaint* paint, struct NVGscissor* scissor,
+static void glnvg__renderStroke(void* uptr, struct NVGpaint* paint, struct NVGscissor* scissor, float fringe,
 								float strokeWidth, const struct NVGpath* paths, int npaths)
 {
 	struct GLNVGcontext* gl = (struct GLNVGcontext*)uptr;
@@ -940,7 +947,7 @@ static void glnvg__renderStroke(void* uptr, struct NVGpaint* paint, struct NVGsc
 
 	// Fill shader
 	call->uniformOffset = glnvg__allocFragUniforms(gl, 1);
-	glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, strokeWidth);
+	glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, strokeWidth, fringe);
 }
 
 static void glnvg__renderTriangles(void* uptr, struct NVGpaint* paint, struct NVGscissor* scissor,
@@ -961,7 +968,7 @@ static void glnvg__renderTriangles(void* uptr, struct NVGpaint* paint, struct NV
 	// Fill shader
 	call->uniformOffset = glnvg__allocFragUniforms(gl, 1);
 	frag = nvg__fragUniformPtr(gl, call->uniformOffset);
-	glnvg__convertPaint(gl, frag, paint, scissor, 1.0f);
+	glnvg__convertPaint(gl, frag, paint, scissor, 1.0f, 1.0f);
 	frag->type = NSVG_SHADER_IMG;
 }
 
