@@ -34,14 +34,14 @@ struct NVGcontext;
 
 struct NVGcolor
 {
-    union
-    {
-        float rgba[4];
-        struct
-        {
-            float r,g,b,a;
-        };
-    };
+	union
+	{
+		float rgba[4];
+		struct
+		{
+			float r,g,b,a;
+		};
+	};
 };
 
 struct NVGpaint
@@ -118,17 +118,28 @@ void nvgEndFrame(struct NVGcontext* ctx);
 //
 // Colors in NanoVG are stored as unsigned ints in ABGR format.
 
-// Returns a color value from red, green, blue values. Alpha will be set to 255.
+// Returns a color value from red, green, blue values. Alpha will be set to 255 (1.0f).
 struct NVGcolor nvgRGB(unsigned char r, unsigned char g, unsigned char b);
+
+// Returns a color value from red, green, blue values. Alpha will be set to 1.0f.
+struct NVGcolor nvgRGBf(float r, float g, float b);
+
 
 // Returns a color value from red, green, blue and alpha values.
 struct NVGcolor nvgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a);
+
+// Returns a color value from red, green, blue and alpha values.
+struct NVGcolor nvgRGBAf(float r, float g, float b, float a);
+
 
 // Linearly interpoaltes from color c0 to c1, and returns resulting color value.
 struct NVGcolor nvgLerpRGBA(struct NVGcolor c0, struct NVGcolor c1, float u);
 
 // Sets transparency of a color value.
 struct NVGcolor nvgTransRGBA(struct NVGcolor c0, unsigned char a);
+
+// Sets transparency of a color value.
+struct NVGcolor nvgTransRGBAf(struct NVGcolor c0, float a);
 
 // Returns color value specified by hue, saturation and lightness.
 // HSL values are all in range [0..1], alpha will be set to 255.
@@ -137,9 +148,6 @@ struct NVGcolor nvgHSL(float h, float s, float l);
 // Returns color value specified by hue, saturation and lightness and alpha.
 // HSL values are all in range [0..1], alpha in range [0..255]
 struct NVGcolor nvgHSLA(float h, float s, float l, unsigned char a);
-
-// Returns 1 if col.rgba is 0.0f,0.0f,0.0f,0.0f, 0 otherwise
-int nvgIsBlack( struct NVGcolor col );
 
 //
 // State Handling

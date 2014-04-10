@@ -282,10 +282,21 @@ struct NVGcolor nvgRGB(unsigned char r, unsigned char g, unsigned char b)
 	return nvgRGBA(r,g,b,255);
 }
 
+struct NVGcolor nvgRGBf(float r, float g, float b)
+{
+	return nvgRGBAf(r,g,b,1.0f);
+}
+
 struct NVGcolor nvgRGBA(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
 {
-    struct NVGcolor color = {r/255.0f, g/255.0f, b/255.0f, a/255.0f};
-    return color;
+	struct NVGcolor color = {r/255.0f, g/255.0f, b/255.0f, a/255.0f};
+	return color;
+}
+
+struct NVGcolor nvgRGBAf(float r, float g, float b, float a)
+{
+	struct NVGcolor color = {r, g, b, a};
+	return color;
 }
 
 struct NVGcolor nvgTransRGBA(struct NVGcolor c, unsigned char a)
@@ -294,18 +305,24 @@ struct NVGcolor nvgTransRGBA(struct NVGcolor c, unsigned char a)
 	return c;
 }
 
+struct NVGcolor nvgTransRGBAf(struct NVGcolor c, float a)
+{
+	c.a = a;
+	return c;
+}
+
 struct NVGcolor nvgLerpRGBA(struct NVGcolor c0, struct NVGcolor c1, float u)
 {
-    int i;
-    float oneminu;
-    struct NVGcolor cint;
+	int i;
+	float oneminu;
+	struct NVGcolor cint;
 
 	u = nvg__clampf(u, 0.0f, 1.0f);
-    oneminu = 1.0f - u;
-    for( i = 0; i <4; ++i )
-    {
-        cint.rgba[i] = c0.rgba[i] * oneminu + c1.rgba[i] * u;
-    }
+	oneminu = 1.0f - u;
+	for( i = 0; i <4; ++i )
+	{
+		cint.rgba[i] = c0.rgba[i] * oneminu + c1.rgba[i] * u;
+	}
 	 
 	return cint;
 }
@@ -341,17 +358,8 @@ struct NVGcolor nvgHSLA(float h, float s, float l, unsigned char a)
 	col.r = nvg__clampf(nvg__hue(h + 1.0f/3.0f, m1, m2), 0.0f, 1.0f);
 	col.g = nvg__clampf(nvg__hue(h, m1, m2), 0.0f, 1.0f);
 	col.b = nvg__clampf(nvg__hue(h - 1.0f/3.0f, m1, m2), 0.0f, 1.0f);
-    col.a = a/255.0f;
+	col.a = a/255.0f;
 	return col;
-}
-
-int nvgIsBlack( struct NVGcolor col )
-{
-    if( col.r == 0.0f && col.g == 0.0f && col.b == 0.0f && col.a == 0.0f )
-    {
-        return 1;
-    }
-    return 0;
 }
 
 static struct NVGstate* nvg__getState(struct NVGcontext* ctx)
