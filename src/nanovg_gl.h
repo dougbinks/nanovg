@@ -633,20 +633,12 @@ static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, const 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-<<<<<<< HEAD:src/nanovg_gl3buf.h
-    // restore to defaults
-	glPixelStorei(GL_UNPACK_ALIGNMENT,4);
-	glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
-	glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
-	glPixelStorei(GL_UNPACK_SKIP_ROWS,0);
-=======
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 #ifndef NANOVG_GLES2
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 	glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
 	glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 #endif
->>>>>>> master:src/nanovg_gl.h
 
 	if (glnvg__checkError("create tex"))
 		return 0;
@@ -703,15 +695,7 @@ static int glnvg__renderUpdateTexture(void* uptr, int image, int x, int y, int w
 	glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 #endif
 
-<<<<<<< HEAD:src/nanovg_gl3buf.h
-    // restore to defaults
-	glPixelStorei(GL_UNPACK_ALIGNMENT,4);
-	glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
-	glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
-	glPixelStorei(GL_UNPACK_SKIP_ROWS,0);
-=======
 	glBindTexture(GL_TEXTURE_2D, 0);
->>>>>>> master:src/nanovg_gl.h
 
     return 1;
 }
