@@ -67,11 +67,13 @@ struct FONSquad
 };
 
 struct FONStextIter {
-	float x, y, scale, spacing;
+	float x, y, nextx, nexty, scale, spacing;
+	unsigned int codepoint;
 	short isize, iblur;
 	struct FONSfont* font;
 	struct FONSglyph* prevGlyph;
 	const char* str;
+	const char* next;
 	const char* end;
 	unsigned int utf8state;
 };
@@ -110,7 +112,8 @@ void fonsSetFont(struct FONScontext* s, int font);
 float fonsDrawText(struct FONScontext* s, float x, float y, const char* string, const char* end);
 
 // Measure text
-float fonsTextBounds(struct FONScontext* s, const char* string, const char* end, float* bounds);
+float fonsTextBounds(struct FONScontext* s, float x, float y, const char* string, const char* end, float* bounds);
+void fonsLineBounds(struct FONScontext* s, float y, float* miny, float* maxy);
 void fonsVertMetrics(struct FONScontext* s, float* ascender, float* descender, float* lineh);
 
 // Text iterator
@@ -393,7 +396,7 @@ struct FONScontext
 	float tcoords[FONS_VERTEX_COUNT*2];
 	unsigned int colors[FONS_VERTEX_COUNT];
 	int nverts;
-	unsigned char scratch[FONS_SCRATCH_BUF_SIZE];
+	unsigned char *scratch;
 	int nscratch;
 	struct FONSstate states[FONS_MAX_STATES];
 	int nstates;
@@ -404,8 +407,11 @@ struct FONScontext
 static void* fons__tmpalloc(size_t size, void* up)
 {
 	unsigned char* ptr;
-
 	struct FONScontext* stash = (struct FONScontext*)up;
+
+	// 16-byte align the returned pointer
+	size = (size + 0xf) & ~0xf;
+
 	if (stash->nscratch+(int)size > FONS_SCRATCH_BUF_SIZE) {
 		if (stash->handleError)
 			stash->handleError(stash->errorUptr, FONS_SCRATCH_FULL, stash->nscratch+(int)size);
@@ -462,7 +468,7 @@ static unsigned int fons__decutf8(unsigned int* state, unsigned int* codep, unsi
 	return *state;
 }
 
-// Atlas based on Skyline Pin Packer by Jukka Jylänki
+// Atlas based on Skyline Bin Packer by Jukka Jylänki
 
 static void fons__deleteAtlas(struct FONSatlas* atlas)
 {
@@ -675,6 +681,10 @@ struct FONScontext* fonsCreateInternal(struct FONSparams* params)
 	memset(stash, 0, sizeof(struct FONScontext));
 
 	stash->params = *params;
+
+	// Allocate scratch buffer.
+	stash->scratch = (unsigned char*)malloc(FONS_SCRATCH_BUF_SIZE);
+	if (stash->scratch == NULL) goto error;
 
 	// Initialize implementation library
 	if (!fons__tt_init(stash)) goto error;
@@ -1090,7 +1100,7 @@ static void fons__getQuad(struct FONScontext* stash, struct FONSfont* font,
 
 	if (prevGlyph) {
 		float adv = fons__tt_getGlyphKernAdvance(&font->font, prevGlyph->index, glyph->index) * scale;
-		*x += (int)(adv + 0.5f);
+		*x += (int)(adv + spacing + 0.5f);
 	}
 
 	// Each glyph has 2px border to allow good interpolation,
@@ -1131,7 +1141,7 @@ static void fons__getQuad(struct FONScontext* stash, struct FONSfont* font,
 		q->t1 = y1 * stash->ith;
 	}
 
-	*x += (int)(glyph->xadv / 10.0f + spacing + 0.5f);
+	*x += (int)(glyph->xadv / 10.0f + 0.5f);
 }
 
 static void fons__flush(struct FONScontext* stash)
@@ -1221,10 +1231,10 @@ float fonsDrawText(struct FONScontext* stash,
 	if (state->align & FONS_ALIGN_LEFT) {
 		// empty
 	} else if (state->align & FONS_ALIGN_RIGHT) {
-		width = fonsTextBounds(stash, str, end, NULL);
+		width = fonsTextBounds(stash, x,y, str, end, NULL);
 		x -= width;
 	} else if (state->align & FONS_ALIGN_CENTER) {
-		width = fonsTextBounds(stash, str, end, NULL);
+		width = fonsTextBounds(stash, x,y, str, end, NULL);
 		x -= width * 0.5f;
 	}
 	// Align vertically.
@@ -1276,10 +1286,10 @@ int fonsTextIterInit(struct FONScontext* stash, struct FONStextIter* iter,
 	if (state->align & FONS_ALIGN_LEFT) {
 		// empty
 	} else if (state->align & FONS_ALIGN_RIGHT) {
-		width = fonsTextBounds(stash, str, end, NULL);
+		width = fonsTextBounds(stash, x,y, str, end, NULL);
 		x -= width;
 	} else if (state->align & FONS_ALIGN_CENTER) {
-		width = fonsTextBounds(stash, str, end, NULL);
+		width = fonsTextBounds(stash, x,y, str, end, NULL);
 		x -= width * 0.5f;
 	}
 	// Align vertically.
@@ -1288,11 +1298,13 @@ int fonsTextIterInit(struct FONScontext* stash, struct FONStextIter* iter,
 	if (end == NULL)
 		end = str + strlen(str);
 
-	iter->x = x;
-	iter->y = y;
+	iter->x = iter->nextx = x;
+	iter->y = iter->nexty = y;
 	iter->spacing = state->spacing;
 	iter->str = str;
+	iter->next = str;
 	iter->end = end;
+	iter->codepoint = 0;
 
 	return 1;
 }
@@ -1300,24 +1312,26 @@ int fonsTextIterInit(struct FONScontext* stash, struct FONStextIter* iter,
 int fonsTextIterNext(struct FONScontext* stash, struct FONStextIter* iter, struct FONSquad* quad)
 {
 	struct FONSglyph* glyph = NULL;
-	unsigned int codepoint = 0;
-	const char* str = iter->str;
+	const char* str = iter->next;
+	iter->str = iter->next;
 
-	if (*str == '\0')
+	if (str == iter->end)
 		return 0;
 
 	for (; str != iter->end; str++) {
-		if (fons__decutf8(&iter->utf8state, &codepoint, *(const unsigned char*)str))
+		if (fons__decutf8(&iter->utf8state, &iter->codepoint, *(const unsigned char*)str))
 			continue;
 		str++;
 		// Get glyph and quad
-		glyph = fons__getGlyph(stash, iter->font, codepoint, iter->isize, iter->iblur);
+		iter->x = iter->nextx;
+		iter->y = iter->nexty;
+		glyph = fons__getGlyph(stash, iter->font, iter->codepoint, iter->isize, iter->iblur);
 		if (glyph != NULL)
-			fons__getQuad(stash, iter->font, iter->prevGlyph, glyph, iter->scale, iter->spacing, &iter->x, &iter->y, quad);
+			fons__getQuad(stash, iter->font, iter->prevGlyph, glyph, iter->scale, iter->spacing, &iter->nextx, &iter->nexty, quad);
 		iter->prevGlyph = glyph;
 		break;
 	}
-	iter->str = str;
+	iter->next = str;
 
 	return 1;
 }
@@ -1371,6 +1385,7 @@ void fonsDrawDebug(struct FONScontext* stash, float x, float y)
 }
 
 float fonsTextBounds(struct FONScontext* stash,
+					 float x, float y, 
 					 const char* str, const char* end,
 					 float* bounds)
 {
@@ -1384,7 +1399,8 @@ float fonsTextBounds(struct FONScontext* stash,
 	short iblur = (short)state->blur;
 	float scale;
 	struct FONSfont* font;
-	float x = 0, y = 0, minx, miny, maxx, maxy;
+	float startx, advance;
+	float minx, miny, maxx, maxy;
 
 	if (stash == NULL) return 0;
 	if (state->font < 0 || state->font >= stash->nfonts) return 0;
@@ -1398,6 +1414,7 @@ float fonsTextBounds(struct FONScontext* stash,
 
 	minx = maxx = x;
 	miny = maxy = y;
+	startx = x;
 
 	if (end == NULL)
 		end = str + strlen(str);
@@ -1407,24 +1424,31 @@ float fonsTextBounds(struct FONScontext* stash,
 			continue;
 		glyph = fons__getGlyph(stash, font, codepoint, isize, iblur);
 		if (glyph) {
-			fons__getQuad(stash, font, prevGlyph, glyph, state->spacing, scale, &x, &y, &q);
+			fons__getQuad(stash, font, prevGlyph, glyph, scale, state->spacing, &x, &y, &q);
 			if (q.x0 < minx) minx = q.x0;
 			if (q.x1 > maxx) maxx = q.x1;
-			if (q.y1 < miny) miny = q.y1;
-			if (q.y0 > maxy) maxy = q.y0;
+			if (stash->params.flags & FONS_ZERO_TOPLEFT) {
+				if (q.y0 < miny) miny = q.y0;
+				if (q.y1 > maxy) maxy = q.y1;
+			} else {
+				if (q.y1 < miny) miny = q.y1;
+				if (q.y0 > maxy) maxy = q.y0;
+			}
 		}
 		prevGlyph = glyph;
 	}
+
+	advance = x - startx;
 
 	// Align horizontally
 	if (state->align & FONS_ALIGN_LEFT) {
 		// empty
 	} else if (state->align & FONS_ALIGN_RIGHT) {
-		minx -= x;
-		maxx -= x;
+		minx -= advance;
+		maxx -= advance;
 	} else if (state->align & FONS_ALIGN_CENTER) {
-		minx -= x * 0.5f;
-		maxx -= x * 0.5f;
+		minx -= advance * 0.5f;
+		maxx -= advance * 0.5f;
 	}
 
 	if (bounds) {
@@ -1434,7 +1458,7 @@ float fonsTextBounds(struct FONScontext* stash,
 		bounds[3] = maxy;
 	}
 
-	return x;
+	return advance;
 }
 
 void fonsVertMetrics(struct FONScontext* stash,
@@ -1456,6 +1480,29 @@ void fonsVertMetrics(struct FONScontext* stash,
 		*descender = font->descender*isize/10.0f;
 	if (lineh)
 		*lineh = font->lineh*isize/10.0f;
+}
+
+void fonsLineBounds(struct FONScontext* stash, float y, float* miny, float* maxy)
+{
+	struct FONSfont* font;
+	struct FONSstate* state = fons__getState(stash);
+	short isize;
+
+	if (stash == NULL) return;
+	if (state->font < 0 || state->font >= stash->nfonts) return;
+	font = stash->fonts[state->font];
+	isize = (short)(state->size*10.0f);
+	if (!font->data) return;
+
+	y += fons__getVertAlign(stash, font, state->align, isize);
+
+	if (stash->params.flags & FONS_ZERO_TOPLEFT) {
+		*miny = y - font->ascender * (float)isize/10.0f;
+		*maxy = *miny + font->lineh*isize/10.0f;
+	} else {
+		*maxy = y + font->descender * (float)isize/10.0f;
+		*miny = *maxy - font->lineh*isize/10.0f;
+	}
 }
 
 const unsigned char* fonsGetTextureData(struct FONScontext* stash, int* width, int* height)
@@ -1498,6 +1545,7 @@ void fonsDeleteInternal(struct FONScontext* stash)
 	if (stash->atlas) fons__deleteAtlas(stash->atlas);
 	if (stash->fonts) free(stash->fonts);
 	if (stash->texData) free(stash->texData);
+	if (stash->scratch) free(stash->scratch);
 	free(stash);
 }
 

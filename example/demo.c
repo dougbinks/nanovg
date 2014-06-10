@@ -13,7 +13,7 @@
 
 #ifdef _MSC_VER
 #define snprintf _snprintf
-#else
+#elif !defined(__MINGW32__)
 #include <iconv.h>
 #endif
 
@@ -23,6 +23,11 @@
 #define ICON_CHECK 0x2713
 #define ICON_LOGIN 0xE740
 #define ICON_TRASH 0xE729
+
+static float minf(float a, float b) { return a < b ? a : b; }
+static float maxf(float a, float b) { return a > b ? a : b; }
+static float absf(float a) { return a >= 0.0f ? a : -a; }
+static float clampf(float a, float mn, float mx) { return a < mn ? mn : (a > mx ? mx : a); }
 
 // Returns 1 if col.rgba is 0.0f,0.0f,0.0f,0.0f, 0 otherwise
 int isBlack( struct NVGcolor col )
@@ -223,7 +228,7 @@ void drawEditBoxNum(struct NVGcontext* vg,
 
 	drawEditBoxBase(vg, x,y, w,h);
 
-	uw = nvgTextBounds(vg, units, NULL, NULL);
+	uw = nvgTextBounds(vg, 0,0, units, NULL, NULL);
 
 	nvgFontSize(vg, 18.0f);
 	nvgFontFace(vg, "sans");
@@ -288,11 +293,11 @@ void drawButton(struct NVGcontext* vg, int preicon, const char* text, float x, f
 
 	nvgFontSize(vg, 20.0f);
 	nvgFontFace(vg, "sans-bold");
-	tw = nvgTextBounds(vg, text, NULL, NULL);
+	tw = nvgTextBounds(vg, 0,0, text, NULL, NULL);
 	if (preicon != 0) {
 		nvgFontSize(vg, h*1.3f);
 		nvgFontFace(vg, "icons");
-		iw = nvgTextBounds(vg, cpToUTF8(preicon,icon), NULL, NULL);
+		iw = nvgTextBounds(vg, 0,0, cpToUTF8(preicon,icon), NULL, NULL);
 		iw += h*0.15f;
 	}
 
@@ -492,6 +497,32 @@ void drawGraph(struct NVGcontext* vg, float x, float y, float w, float h, float 
 	nvgStrokeWidth(vg, 1.0f);
 }
 
+void drawSpinner(struct NVGcontext* vg, float cx, float cy, float r, float t)
+{
+	float a0 = 0.0f + t*6;
+	float a1 = NVG_PI + t*6;
+	float r0 = r;
+	float r1 = r * 0.75f;
+	float ax,ay, bx,by;
+	struct NVGpaint paint;
+
+	nvgSave(vg);
+
+	nvgBeginPath(vg);
+	nvgArc(vg, cx,cy, r0, a0, a1, NVG_CW);
+	nvgArc(vg, cx,cy, r1, a1, a0, NVG_CCW);
+	nvgClosePath(vg);
+	ax = cx + cosf(a0) * (r0+r1)*0.5f;
+	ay = cy + sinf(a0) * (r0+r1)*0.5f;
+	bx = cx + cosf(a1) * (r0+r1)*0.5f;
+	by = cy + sinf(a1) * (r0+r1)*0.5f;
+	paint = nvgLinearGradient(vg, ax,ay, bx,by, nvgRGBA(0,0,0,0), nvgRGBA(0,0,0,128));
+	nvgFillPaint(vg, paint);
+	nvgFill(vg);
+
+	nvgRestore(vg);
+}
+
 void drawThumbnails(struct NVGcontext* vg, float x, float y, float w, float h, const int* images, int nimages, float t)
 {
 	float cornerRadius = 3.0f;
@@ -503,7 +534,8 @@ void drawThumbnails(struct NVGcontext* vg, float x, float y, float w, float h, c
 	float stackh = (nimages/2) * (thumb+10) + 10;
 	int i;
 	float u = (1+cosf(t*0.5f))*0.5f;
-	float scrollh;
+	float u2 = (1-cosf(t*0.2f))*0.5f;
+	float scrollh, dv;
 
 	nvgSave(vg);
 //	nvgClearState(vg);
@@ -530,8 +562,10 @@ void drawThumbnails(struct NVGcontext* vg, float x, float y, float w, float h, c
 	nvgScissor(vg, x,y,w,h);
 	nvgTranslate(vg, 0, -(stackh - h)*u);
 
+	dv = 1.0f / (float)(nimages-1);
+
 	for (i = 0; i < nimages; i++) {
-		float tx, ty;
+		float tx, ty, v, a;
 		tx = x+10;
 		ty = y+10;
 		tx += (i%2) * (thumb+10);
@@ -548,7 +582,14 @@ void drawThumbnails(struct NVGcontext* vg, float x, float y, float w, float h, c
 			ix = -(iw-thumb)*0.5f;
 			iy = 0;
 		}
-		imgPaint = nvgImagePattern(vg, tx+ix, ty+iy, iw,ih, 0.0f/180.0f*NVG_PI, images[i], 0);
+
+		v = i * dv;
+		a = clampf((u2-v) / dv, 0, 1);
+
+		if (a < 1.0f)
+			drawSpinner(vg, tx+thumb/2,ty+thumb/2, thumb*0.25f, t);
+
+		imgPaint = nvgImagePattern(vg, tx+ix, ty+iy, iw,ih, 0.0f/180.0f*NVG_PI, images[i], NVG_NOREPEAT, a);
 		nvgBeginPath(vg);
 		nvgRoundedRect(vg, tx,ty, thumb,thumb, 5);
 		nvgFillPaint(vg, imgPaint);
@@ -808,17 +849,192 @@ void freeDemoData(struct NVGcontext* vg, struct DemoData* data)
 		nvgDeleteImage(vg, data->images[i]);
 }
 
+void drawParagraph(struct NVGcontext* vg, float x, float y, float width, float height, float mx, float my)
+{
+	struct NVGtextRow rows[3];
+	struct NVGglyphPosition glyphs[100];
+	const char* text = "This is longer chunk of text.\n  \n  Would have used lorem ipsum but she    was busy jumping over the lazy dog with the fox and all the men who came to the aid of the party.";
+	const char* start;
+	const char* end;
+	int nrows, i, nglyphs, j, lnum = 0;
+	float lineh;
+	float caretx, px;
+	float bounds[4];
+	float a;
+	float gx,gy;
+	int gutter = 0;
+	NVG_NOTUSED(height);
+
+	nvgSave(vg);
+
+	nvgFontSize(vg, 18.0f);
+	nvgFontFace(vg, "sans");
+	nvgTextAlign(vg, NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+	nvgTextMetrics(vg, NULL, NULL, &lineh);
+
+	// The text break API can be used to fill a large buffer of rows,
+	// or to iterate over the text just few lines (or just one) at a time.
+	// The "next" variable of the last returned item tells where to continue.
+	start = text;
+	end = text + strlen(text);
+	while ((nrows = nvgTextBreakLines(vg, start, end, width, rows, 3))) {
+		for (i = 0; i < nrows; i++) {
+			struct NVGtextRow* row = &rows[i];
+			int hit = mx > x && mx < (x+width) && my >= y && my < (y+lineh);
+
+			nvgBeginPath(vg);
+			nvgFillColor(vg, nvgRGBA(255,255,255,hit?64:16));
+			nvgRect(vg, x, y, row->width, lineh);
+			nvgFill(vg);
+
+			nvgFillColor(vg, nvgRGBA(255,255,255,255));
+			nvgText(vg, x, y, row->start, row->end);
+
+			if (hit) {
+				caretx = (mx < x+row->width/2) ? x : x+row->width;
+				px = x;
+				nglyphs = nvgTextGlyphPositions(vg, x, y, row->start, row->end, glyphs, 100);
+				for (j = 0; j < nglyphs; j++) {
+					float x0 = glyphs[j].x;
+					float x1 = (j+1 < nglyphs) ? glyphs[j+1].x : x+row->width;
+					float gx = x0 * 0.3f + x1 * 0.7f;
+					if (mx >= px && mx < gx)
+						caretx = glyphs[j].x;
+					px = gx;
+				}
+				nvgBeginPath(vg);
+				nvgFillColor(vg, nvgRGBA(255,192,0,255));
+				nvgRect(vg, caretx, y, 1, lineh);
+				nvgFill(vg);
+
+				gutter = lnum+1;
+				gx = x - 10;
+				gy = y + lineh/2;
+			}
+			lnum++;
+			y += lineh;
+		}
+		// Keep going...
+		start = rows[nrows-1].next;
+	}
+
+	if (gutter) {
+		char txt[16];
+		snprintf(txt, sizeof(txt), "%d", gutter);
+		nvgFontSize(vg, 13.0f);
+		nvgTextAlign(vg, NVG_ALIGN_RIGHT|NVG_ALIGN_MIDDLE);
+
+		nvgTextBounds(vg, gx,gy, txt, NULL, bounds);
+
+		nvgBeginPath(vg);
+		nvgFillColor(vg, nvgRGBA(255,192,0,255));
+		nvgRoundedRect(vg, (int)bounds[0]-4,(int)bounds[1]-2, (int)(bounds[2]-bounds[0])+8, (int)(bounds[3]-bounds[1])+4, ((int)(bounds[3]-bounds[1])+4)/2-1);
+		nvgFill(vg);
+
+		nvgFillColor(vg, nvgRGBA(32,32,32,255));
+		nvgText(vg, gx,gy, txt, NULL);
+	}
+
+	y += 20.0f;
+
+	nvgFontSize(vg, 13.0f);
+	nvgTextAlign(vg, NVG_ALIGN_LEFT|NVG_ALIGN_TOP);
+	nvgTextLineHeight(vg, 1.2f);
+
+	nvgTextBoxBounds(vg, x,y, 150, "Hover your mouse over the text to see calculated caret position.", NULL, bounds);
+
+	// Fade the tooltip out when close to it.
+	gx = fabsf((mx - (bounds[0]+bounds[2])*0.5f) / (bounds[0] - bounds[2]));
+	gy = fabsf((my - (bounds[1]+bounds[3])*0.5f) / (bounds[1] - bounds[3]));
+	a = maxf(gx, gy) - 0.5f;
+	a = clampf(a, 0, 1);
+	nvgGlobalAlpha(vg, a);
+
+	nvgBeginPath(vg);
+	nvgFillColor(vg, nvgRGBA(220,220,220,255));
+	nvgRoundedRect(vg, bounds[0]-2,bounds[1]-2, (int)(bounds[2]-bounds[0])+4, (int)(bounds[3]-bounds[1])+4, 3);
+	px = (int)((bounds[2]+bounds[0])/2);
+	nvgMoveTo(vg, px,bounds[1] - 10);
+	nvgLineTo(vg, px+7,bounds[1]+1);
+	nvgLineTo(vg, px-7,bounds[1]+1);
+	nvgFill(vg);
+
+	nvgFillColor(vg, nvgRGBA(0,0,0,220));
+	nvgTextBox(vg, x,y, 150, "Hover your mouse over the text to see calculated caret position.", NULL);
+
+	nvgRestore(vg);
+}
+
+void drawWidths(struct NVGcontext* vg, float x, float y, float width)
+{
+	int i;
+
+	nvgSave(vg);
+
+	nvgStrokeColor(vg, nvgRGBA(0,0,0,255));
+
+	for (i = 0; i < 20; i++) {
+		float w = (i+0.5f)*0.1f;
+		nvgStrokeWidth(vg, w);
+		nvgBeginPath(vg);
+		nvgMoveTo(vg, x,y);
+		nvgLineTo(vg, x+width,y+width*0.3f);
+		nvgStroke(vg);
+		y += 10;
+	}
+
+	nvgRestore(vg);
+}
+
+void drawCaps(struct NVGcontext* vg, float x, float y, float width)
+{
+	int i;
+	int caps[3] = {NVG_BUTT, NVG_ROUND, NVG_SQUARE};
+	float lineWidth = 8.0f;
+
+	nvgSave(vg);
+
+	nvgBeginPath(vg);
+	nvgRect(vg, x-lineWidth/2, y, width+lineWidth, 40);
+	nvgFillColor(vg, nvgRGBA(255,255,255,32));
+	nvgFill(vg);
+
+	nvgBeginPath(vg);
+	nvgRect(vg, x, y, width, 40);
+	nvgFillColor(vg, nvgRGBA(255,255,255,32));
+	nvgFill(vg);
+
+	nvgStrokeWidth(vg, lineWidth);
+	for (i = 0; i < 3; i++) {
+		nvgLineCap(vg, caps[i]);
+		nvgStrokeColor(vg, nvgRGBA(0,0,0,255));
+		nvgBeginPath(vg);
+		nvgMoveTo(vg, x, y + i*10 + 5);
+		nvgLineTo(vg, x+width, y + i*10 + 5);
+		nvgStroke(vg);
+	}
+
+	nvgRestore(vg);
+}
+
 void renderDemo(struct NVGcontext* vg, float mx, float my, float width, float height,
 				float t, int blowup, struct DemoData* data)
 {
 	float x,y,popy;
 
 	drawEyes(vg, width - 250, 50, 150, 100, mx, my, t);
+	drawParagraph(vg, width - 450, 50, 150, 100, mx, my);
 	drawGraph(vg, 0, height/2, width, height/2, t);
 	drawColorwheel(vg, width - 300, height - 300, 250.0f, 250.0f, t);
 
 	// Line joints
 	drawLines(vg, 50, height-50, 600, 50, t);
+
+	// Line caps
+	drawWidths(vg, 10, 50, 30);
+
+	// Line caps
+	drawCaps(vg, 10, 300, 30);
 
 	nvgSave(vg);
 	if (blowup) {
