@@ -849,6 +849,11 @@ void nvgDeleteImage(NVGcontext* ctx, int image)
 	ctx->params.renderDeleteTexture(ctx->params.userPtr, image);
 }
 
+int nvgGetImageNativeID(NVGcontext* ctx, int image)
+{
+    ctx->params.renderGetTextureNativeID(ctx->params.userPtr, image);
+}
+
 NVGpaint nvgLinearGradient(NVGcontext* ctx,
 								  float sx, float sy, float ex, float ey,
 								  NVGcolor icol, NVGcolor ocol)

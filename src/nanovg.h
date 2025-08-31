@@ -388,6 +388,10 @@ void nvgImageSize(NVGcontext* ctx, int image, int* w, int* h);
 // Deletes created image.
 void nvgDeleteImage(NVGcontext* ctx, int image);
 
+// Get the render backend native image ID (if it can be cast to an int)
+int nvgGetImageNativeID(NVGcontext* ctx, int image);
+
+
 //
 // Paints
 //
@@ -665,6 +669,7 @@ struct NVGparams {
 	int (*renderDeleteTexture)(void* uptr, int image);
 	int (*renderUpdateTexture)(void* uptr, int image, int x, int y, int w, int h, const unsigned char* data);
 	int (*renderGetTextureSize)(void* uptr, int image, int* w, int* h);
+	int (*renderGetTextureNativeID)(void* uptr, int image);
 	void (*renderViewport)(void* uptr, float width, float height, float devicePixelRatio);
 	void (*renderCancel)(void* uptr);
 	void (*renderFlush)(void* uptr);
